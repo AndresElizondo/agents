@@ -113,7 +113,7 @@ class TestDiagnoseDagRun:
         """
         mock_run = {"dag_run_id": "scheduled__2026-06-16", "state": "running"}
         # Simulate the merged result of paging: 100 successful instances plus a
-        # failed mapped instance that lived on a later page (map_index 14).
+        # failed mapped instance that lived on a later page (map_index 100).
         merged = {
             "task_instances": (
                 [
@@ -123,7 +123,7 @@ class TestDiagnoseDagRun:
                 + [
                     {
                         "task_id": "lake_load.events_pagepath",
-                        "map_index": 14,
+                        "map_index": 100,
                         "state": "failed",
                         "try_number": 3,
                     }
@@ -143,7 +143,7 @@ class TestDiagnoseDagRun:
         failed = data["summary"]["failed_tasks"]
         assert len(failed) == 1
         assert failed[0]["task_id"] == "lake_load.events_pagepath"
-        assert failed[0]["map_index"] == 14
+        assert failed[0]["map_index"] == 100
         assert data["summary"]["total_tasks"] == 101
 
     def test_diagnose_dag_run_not_found(self, mocker):
