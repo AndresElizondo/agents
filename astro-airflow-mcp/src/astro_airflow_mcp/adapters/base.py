@@ -431,26 +431,35 @@ class AirflowAdapter(ABC):
         """
 
     def get_all_task_instances(
-        self, dag_id: str, dag_run_id: str, page_size: int = 100
+        self, dag_id: str, dag_run_id: str, page_size: int = 100, max_pages: int = 1000
     ) -> dict[str, Any]:
-        """Return every task instance for a DAG run, paging past the limit.
+        """Return every task instance, or raise if the listing is incomplete.
 
-        ``get_task_instances`` returns a single page (``page_size`` 100 by
-        default). On a run with many dynamically mapped instances, a failure at
-        a high ``map_index`` falls past the first page and is silently missed.
-        This pages through ``get_task_instances`` until a short page is
-        returned, so it works unchanged for every adapter version.
+        Follow ``total_entries`` because Airflow may clamp the requested page
+        size. ``max_pages`` bounds requests for very large runs. Missing or
+        invalid totals are errors, since completeness cannot be established.
+        Missing endpoints and interrupted pagination must not look like a
+        complete listing with no failures. Works with both Airflow 2 and 3.
         """
+        if page_size < 1 or max_pages < 1:
+            raise ValueError("page_size and max_pages must be positive")
         merged: list[dict[str, Any]] = []
-        offset = 0
-        while True:
-            page = self.get_task_instances(dag_id, dag_run_id, limit=page_size, offset=offset)
-            batch = page.get("task_instances", [])
+        for _ in range(max_pages):
+            page = self.get_task_instances(dag_id, dag_run_id, limit=page_size, offset=len(merged))
+            batch = page.get("task_instances")
+            if page.get("available") is False or not isinstance(batch, list):
+                raise RuntimeError("Task instance listing unavailable or missing task_instances")
+            total = page.get("total_entries")
+            if type(total) is not int or total < 0:
+                raise ValueError("Invalid total_entries in task instance response")
             merged.extend(batch)
-            offset += len(batch)
-            if len(batch) < page_size:
-                break
-        return {"task_instances": merged, "total_entries": len(merged)}
+            if len(merged) == total:
+                return {"task_instances": merged, "total_entries": total}
+            if not batch or len(merged) > total:
+                raise RuntimeError(
+                    f"Incomplete task instance listing: received {len(merged)} of {total}"
+                )
+        raise RuntimeError(f"Incomplete task instance listing: exceeded {max_pages} pages")
 
     @abstractmethod
     def get_task_logs(

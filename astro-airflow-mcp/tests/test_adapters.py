@@ -1578,13 +1578,72 @@ class TestGetAllTaskInstances:
         assert mock_get.call_count == 1
         assert result == {"task_instances": page["task_instances"], "total_entries": 1}
 
-    def test_unavailable_endpoint_yields_empty_result(self, mocker):
-        """A payload without a task_instances key yields an empty result."""
+    def test_unavailable_endpoint_raises(self, mocker):
+        """An unavailable listing must not masquerade as a run with zero tasks."""
         adapter = self._adapter()
         not_found = {"available": False, "note": "Endpoint not available"}
         mock_get = mocker.patch.object(adapter, "get_task_instances", side_effect=[not_found])
 
-        result = adapter.get_all_task_instances("dag", "run")
+        with pytest.raises(RuntimeError, match="listing unavailable"):
+            adapter.get_all_task_instances("dag", "run")
 
         assert mock_get.call_count == 1
-        assert result == {"task_instances": [], "total_entries": 0}
+
+    @pytest.mark.parametrize("total", [0, 100, 200])
+    def test_stops_at_reported_total(self, mocker, total):
+        """Empty runs and exact page multiples do not need an extra request."""
+        adapter = self._adapter()
+        mock_get = mocker.patch.object(
+            adapter,
+            "get_task_instances",
+            side_effect=lambda _dag_id, _dag_run_id, limit, offset: {
+                "task_instances": [
+                    {"task_id": str(i)} for i in range(offset, min(offset + limit, total))
+                ],
+                "total_entries": total,
+            },
+        )
+
+        result = adapter.get_all_task_instances("dag", "run")
+
+        assert result["total_entries"] == total
+        assert len(result["task_instances"]) == total
+        assert mock_get.call_count == max(1, total // 100)
+
+    def test_empty_page_before_total_raises(self, mocker):
+        adapter = self._adapter()
+        mocker.patch.object(
+            adapter, "get_task_instances", return_value={"task_instances": [], "total_entries": 1}
+        )
+        with pytest.raises(RuntimeError, match="received 0 of 1"):
+            adapter.get_all_task_instances("dag", "run")
+
+    @pytest.mark.parametrize("total", [None, -1, "100", True])
+    def test_invalid_total_raises(self, mocker, total):
+        adapter = self._adapter()
+        mocker.patch.object(
+            adapter,
+            "get_task_instances",
+            return_value={"task_instances": [], "total_entries": total},
+        )
+        with pytest.raises(ValueError, match="Invalid total_entries"):
+            adapter.get_all_task_instances("dag", "run")
+
+    def test_page_limit_raises_instead_of_returning_partial_results(self, mocker):
+        adapter = self._adapter()
+        mock_get = mocker.patch.object(
+            adapter,
+            "get_task_instances",
+            return_value={"task_instances": [{"task_id": "t"}], "total_entries": 3},
+        )
+        with pytest.raises(RuntimeError, match="exceeded 2 pages"):
+            adapter.get_all_task_instances("dag", "run", max_pages=2)
+        assert mock_get.call_count == 2
+
+    @pytest.mark.parametrize("kwargs", [{"page_size": 0}, {"max_pages": 0}])
+    def test_invalid_limits_do_not_make_requests(self, mocker, kwargs):
+        adapter = self._adapter()
+        mock_get = mocker.patch.object(adapter, "get_task_instances")
+        with pytest.raises(ValueError, match="must be positive"):
+            adapter.get_all_task_instances("dag", "run", **kwargs)
+        mock_get.assert_not_called()
