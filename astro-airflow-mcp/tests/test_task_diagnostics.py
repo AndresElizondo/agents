@@ -101,6 +101,38 @@ def test_incomplete_pages_are_reported(adapter, mocker, interface, command, fail
 
 
 @pytest.mark.parametrize("interface", ["mcp", "cli"])
+@pytest.mark.parametrize("command", ["diagnose", "trigger-wait"])
+def test_overlapping_pages_are_reported(adapter, mocker, interface, command):
+    """An updated instance repeated on page two must not hide an omitted failure."""
+    tasks = [{"task_id": "mapped", "map_index": i, "state": "success"} for i in range(101)]
+    tasks[0]["state"] = "running"
+    tasks[100]["state"] = "failed"
+    pages = mocker.patch.object(
+        adapter,
+        "get_task_instances",
+        side_effect=[
+            {"task_instances": tasks[:100], "total_entries": len(tasks)},
+            {
+                "task_instances": [{**tasks[0], "state": "success"}],
+                "total_entries": len(tasks),
+            },
+        ],
+    )
+
+    result = invoke(interface, command)
+
+    assert [call.kwargs["offset"] for call in pages.call_args_list] == [0, 100]
+    if command == "diagnose":
+        assert "duplicate" in result["task_instances"]["error"]
+        assert "summary" not in result
+        assert result["run_info"]["state"] == "failed"
+    else:
+        assert "duplicate" in result["failed_tasks_error"]["error"]
+        assert "failed_tasks" not in result
+        assert result["dag_run"]["state"] == "failed"
+
+
+@pytest.mark.parametrize("interface", ["mcp", "cli"])
 def test_small_diagnosis_preserves_full_details(adapter, mocker, interface):
     tasks = [{"task_id": "only_task", "map_index": -1, "state": "failed", "duration": 12}]
     mocker.patch.object(

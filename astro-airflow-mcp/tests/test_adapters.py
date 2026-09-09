@@ -1629,12 +1629,31 @@ class TestGetAllTaskInstances:
         with pytest.raises(ValueError, match="Invalid total_entries"):
             adapter.get_all_task_instances("dag", "run")
 
+    @pytest.mark.parametrize("map_index", [-1, 0])
+    def test_duplicate_within_page_raises(self, mocker, map_index):
+        adapter = self._adapter()
+        mocker.patch.object(
+            adapter,
+            "get_task_instances",
+            return_value={
+                "task_instances": [
+                    {"task_id": "t", "map_index": map_index, "state": "running"},
+                    {"task_id": "t", "map_index": map_index, "state": "success"},
+                ],
+                "total_entries": 2,
+            },
+        )
+        with pytest.raises(RuntimeError, match="duplicate task instance"):
+            adapter.get_all_task_instances("dag", "run")
+
     def test_page_limit_raises_instead_of_returning_partial_results(self, mocker):
         adapter = self._adapter()
         mock_get = mocker.patch.object(
             adapter,
             "get_task_instances",
-            return_value={"task_instances": [{"task_id": "t"}], "total_entries": 3},
+            side_effect=[
+                {"task_instances": [{"task_id": str(i)}], "total_entries": 3} for i in range(2)
+            ],
         )
         with pytest.raises(RuntimeError, match="exceeded 2 pages"):
             adapter.get_all_task_instances("dag", "run", max_pages=2)

@@ -438,12 +438,15 @@ class AirflowAdapter(ABC):
         Follow ``total_entries`` because Airflow may clamp the requested page
         size. ``max_pages`` bounds requests for very large runs. Missing or
         invalid totals are errors, since completeness cannot be established.
+        Duplicate identities are errors because page boundaries may shift
+        between requests; pagination does not provide an atomic snapshot.
         Missing endpoints and interrupted pagination must not look like a
         complete listing with no failures. Works with both Airflow 2 and 3.
         """
         if page_size < 1 or max_pages < 1:
             raise ValueError("page_size and max_pages must be positive")
         merged: list[dict[str, Any]] = []
+        seen: set[tuple[str, int]] = set()
         for _ in range(max_pages):
             page = self.get_task_instances(dag_id, dag_run_id, limit=page_size, offset=len(merged))
             batch = page.get("task_instances")
@@ -452,6 +455,13 @@ class AirflowAdapter(ABC):
             total = page.get("total_entries")
             if type(total) is not int or total < 0:
                 raise ValueError("Invalid total_entries in task instance response")
+            for task in batch:
+                identity = (task["task_id"], task.get("map_index", -1))
+                if identity in seen:
+                    raise RuntimeError(
+                        f"Incomplete task instance listing: duplicate task instance {identity}"
+                    )
+                seen.add(identity)
             merged.extend(batch)
             if len(merged) == total:
                 return {"task_instances": merged, "total_entries": total}

@@ -212,10 +212,12 @@ and `task_instances_truncated` describing that sample. Use `get_task_logs` with
 the reported `task_id`, `try_number`, and `map_index` to investigate a failure.
 
 Failed-task retrieval for `trigger_dag_and_wait` and `af runs trigger-wait` also
-uses pagination. Retrieval errors, invalid totals, or the 1,000-page safety limit
-produce an explicit error instead of a partial failure list. Diagnostics omit
-the summary on failure; trigger-wait retains the final run status and adds
-`failed_tasks_error`. Pagination works with both Airflow 2 and 3.
+uses pagination. Retrieval errors, invalid totals, duplicate task instances, or
+the 1,000-page safety limit produce an explicit error instead of a partial failure
+list. Diagnostics omit the summary on failure; trigger-wait retains the final run
+status and adds `failed_tasks_error`. Pagination works with both Airflow 2 and 3.
+Overlapping pages are rejected; pagination does not provide an atomic snapshot
+of a changing run.
 
 ### Core Tools
 
