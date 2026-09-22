@@ -83,17 +83,22 @@ def summarize_task_instances(task_instances: list[dict[str, Any]]) -> dict[str, 
     """Summarize every instance, retaining only a bounded sample of full details.
 
     Counts and compact failed-task details cover the complete listing. The
-    sample keeps large mapped runs from filling the model's context with full
-    metadata for successful tasks. MCP and CLI diagnostics share this format.
+    sample prioritizes failed, then upstream_failed instances before other
+    states. MCP and CLI diagnostics share this format.
     """
-    sample = task_instances[:DEFAULT_LIMIT]
+    state_order = {"failed": 0, "upstream_failed": 1}
+    sample = sorted(task_instances, key=lambda task: state_order.get(task.get("state"), 2))[
+        :DEFAULT_LIMIT
+    ]
     return {
         "task_instances": sample,
         "task_instances_returned": len(sample),
         "task_instances_truncated": len(sample) < len(task_instances),
         "summary": {
             "total_tasks": len(task_instances),
-            "state_counts": dict(Counter(task.get("state", "unknown") for task in task_instances)),
+            "state_counts": dict(
+                Counter(task.get("state") or "unknown" for task in task_instances)
+            ),
             "failed_tasks": extract_failed_tasks(task_instances),
         },
     }

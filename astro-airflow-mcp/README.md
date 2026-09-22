@@ -207,9 +207,10 @@ claude mcp add airflow -e AIRFLOW_API_URL=https://your-airflow.example.com -e AI
 building their summaries. `summary.total_tasks`, `summary.state_counts`, and
 `summary.failed_tasks` cover the complete listing; failed instances include
 `map_index` so mapped failures can be distinguished. The full `task_instances`
-details are limited to the first 100 instances, with `task_instances_returned`
-and `task_instances_truncated` describing that sample. Use `get_task_logs` with
-the reported `task_id`, `try_number`, and `map_index` to investigate a failure.
+details are limited to 100 instances, prioritizing `failed`, then `upstream_failed`,
+then other states. `task_instances_returned` and `task_instances_truncated`
+describe that sample. Missing or null states count as `unknown`. Use `get_task_logs`
+with the reported `task_id`, `try_number`, and `map_index` to investigate a failure.
 
 Failed-task retrieval for `trigger_dag_and_wait` and `af runs trigger-wait` also
 uses pagination. Retrieval errors, invalid totals, duplicate task instances, or

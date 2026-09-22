@@ -70,8 +70,37 @@ def test_failures_beyond_server_clamped_pages(adapter, mocker, interface, comman
         assert summary["total_tasks"] == 815
         assert summary["state_counts"] == {"success": 813, "failed": 1, "upstream_failed": 1}
         assert len(result["task_instances"]) == 100
+        assert result["task_instances"] == tasks[813:] + tasks[:98]
         assert result["task_instances_returned"] == 100
         assert result["task_instances_truncated"] is True
+
+
+@pytest.mark.parametrize("interface", ["mcp", "cli"])
+def test_diagnosis_prioritizes_failures_and_counts_unset_states(adapter, mocker, interface):
+    """A late failure stays visible during a cascade, and unset states share a count."""
+    tasks = [
+        {"task_id": "pending", "state": None},
+        {"task_id": "missing"},
+        *[{"task_id": "mapped", "map_index": i, "state": "upstream_failed"} for i in range(100)],
+        {"task_id": "root", "state": "failed"},
+    ]
+    mocker.patch.object(
+        adapter,
+        "get_task_instances",
+        side_effect=lambda _dag_id, _dag_run_id, limit, offset: {
+            "task_instances": tasks[offset : offset + limit],
+            "total_entries": len(tasks),
+        },
+    )
+
+    result = invoke(interface, "diagnose")
+
+    assert result["summary"]["state_counts"] == {"unknown": 2, "upstream_failed": 100, "failed": 1}
+    assert result["summary"]["total_tasks"] == 103
+    assert len(result["summary"]["failed_tasks"]) == 101
+    assert result["task_instances"] == [tasks[-1], *tasks[2:101]]
+    assert result["task_instances_returned"] == 100
+    assert result["task_instances_truncated"] is True
 
 
 @pytest.mark.parametrize("interface", ["mcp", "cli"])
