@@ -170,7 +170,7 @@ def explore_dag(dag_id: str) -> str:
 
 
 @mcp.tool(annotations=read_only())
-def diagnose_dag_run(dag_id: str, dag_run_id: str) -> str:
+def diagnose_dag_run(dag_id: str, dag_run_id: str, include_all_failed_tasks: bool = False) -> str:
     """Diagnose issues with a specific DAG run - get run details and failed tasks.
 
     USE THIS TOOL WHEN troubleshooting a failed or problematic DAG run. Returns
@@ -184,7 +184,8 @@ def diagnose_dag_run(dag_id: str, dag_run_id: str) -> str:
     Returns combined data:
     - DAG run metadata (state, start/end times, trigger type)
     - Up to 100 task instances with full details and explicit sample metadata
-    - All failed/upstream_failed tasks, including map_index, across every page
+    - Up to 100 failed/upstream_failed task details, including map_index
+    - failed_tasks_total, failed_tasks_returned, and failed_tasks_truncated in summary
     - Complete counts of task states (not limited to the sample)
 
     If task retrieval fails or exceeds the pagination safety limit, returns a
@@ -193,6 +194,8 @@ def diagnose_dag_run(dag_id: str, dag_run_id: str) -> str:
     Args:
         dag_id: The ID of the DAG
         dag_run_id: The ID of the DAG run (e.g., "manual__2024-01-01T00:00:00+00:00")
+        include_all_failed_tasks: Return every failed-task detail instead of the
+            default 100. Use this on an existing run to retrieve omitted details.
 
     Returns:
         JSON with diagnostic information about the DAG run
@@ -210,7 +213,9 @@ def diagnose_dag_run(dag_id: str, dag_run_id: str) -> str:
     # Get task instances for this run
     try:
         tasks_data = adapter.get_all_task_instances(dag_id, dag_run_id)
-        result.update(summarize_task_instances(tasks_data["task_instances"]))
+        result.update(
+            summarize_task_instances(tasks_data["task_instances"], include_all_failed_tasks)
+        )
     except Exception as e:
         result["task_instances"] = error_payload(e, dag_id=dag_id, dag_run_id=dag_run_id)
 
