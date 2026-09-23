@@ -436,10 +436,11 @@ class AirflowAdapter(ABC):
         """Return every task instance, or raise if the listing is incomplete.
 
         Follow ``total_entries`` because Airflow may clamp the requested page
-        size. ``max_pages`` bounds requests for very large runs. Missing or
+        size. ``max_pages`` bounds all requests, including a restart. Missing or
         invalid totals are errors, since completeness cannot be established.
-        Duplicate identities are errors because page boundaries may shift
-        between requests; pagination does not provide an atomic snapshot.
+        Overlapping pages restart the listing once, discarding the first walk.
+        Repeated overlap or duplicates within one page are errors. Pagination
+        does not provide an atomic snapshot.
         Missing endpoints and interrupted pagination must not look like a
         complete listing with no failures. Works with both Airflow 2 and 3.
         """
@@ -447,6 +448,7 @@ class AirflowAdapter(ABC):
             raise ValueError("page_size and max_pages must be positive")
         merged: list[dict[str, Any]] = []
         seen: set[tuple[str, int]] = set()
+        restarted = False
         for _ in range(max_pages):
             page = self.get_task_instances(dag_id, dag_run_id, limit=page_size, offset=len(merged))
             batch = page.get("task_instances")
@@ -455,13 +457,25 @@ class AirflowAdapter(ABC):
             total = page.get("total_entries")
             if type(total) is not int or total < 0:
                 raise ValueError("Invalid total_entries in task instance response")
+            batch_seen: set[tuple[str, int]] = set()
             for task in batch:
                 identity = (task["task_id"], task.get("map_index", -1))
-                if identity in seen:
+                if identity in batch_seen:
                     raise RuntimeError(
                         f"Incomplete task instance listing: duplicate task instance {identity}"
                     )
-                seen.add(identity)
+                batch_seen.add(identity)
+            if overlap := seen & batch_seen:
+                if restarted:
+                    raise RuntimeError(
+                        "Incomplete task instance listing: duplicate task instance "
+                        f"{next(iter(overlap))} after restarting pagination"
+                    )
+                merged.clear()
+                seen.clear()
+                restarted = True
+                continue
+            seen.update(batch_seen)
             merged.extend(batch)
             if len(merged) == total:
                 return {"task_instances": merged, "total_entries": total}
