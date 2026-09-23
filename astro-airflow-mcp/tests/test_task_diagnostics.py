@@ -108,7 +108,7 @@ def test_diagnosis_prioritizes_failures_and_counts_unset_states(adapter, mocker,
 @pytest.mark.parametrize("failure", [{"available": False}, RuntimeError("API unavailable")])
 def test_incomplete_pages_are_reported(adapter, mocker, interface, command, failure):
     """A failed second page cannot become an empty or partial failure summary."""
-    mocker.patch.object(
+    pages = mocker.patch.object(
         adapter,
         "get_task_instances",
         side_effect=[
@@ -119,6 +119,7 @@ def test_incomplete_pages_are_reported(adapter, mocker, interface, command, fail
 
     result = invoke(interface, command)
 
+    assert pages.call_count == 2
     if command == "diagnose":
         assert "error" in result["task_instances"]
         assert "summary" not in result
@@ -145,12 +146,13 @@ def test_overlapping_pages_are_reported(adapter, mocker, interface, command):
                 "task_instances": [{**tasks[0], "state": "success"}],
                 "total_entries": len(tasks),
             },
-        ],
+        ]
+        * 2,
     )
 
     result = invoke(interface, command)
 
-    assert [call.kwargs["offset"] for call in pages.call_args_list] == [0, 100]
+    assert [call.kwargs["offset"] for call in pages.call_args_list] == [0, 100, 0, 100]
     if command == "diagnose":
         assert "duplicate" in result["task_instances"]["error"]
         assert "summary" not in result
@@ -159,6 +161,39 @@ def test_overlapping_pages_are_reported(adapter, mocker, interface, command):
         assert "duplicate" in result["failed_tasks_error"]["error"]
         assert "failed_tasks" not in result
         assert result["dag_run"]["state"] == "failed"
+
+
+@pytest.mark.parametrize("interface", ["mcp", "cli"])
+@pytest.mark.parametrize("command", ["diagnose", "trigger-wait"])
+def test_overlapping_pages_restart_with_fresh_results(adapter, mocker, interface, command):
+    """A stable second walk recovers the omitted failure without retriggering a run."""
+    tasks = [{"task_id": "mapped", "map_index": i, "state": "success"} for i in range(100)]
+    tasks.append({"task_id": "mapped", "map_index": 100, "state": "failed"})
+    first_page = [{**tasks[0], "state": "running"}, *tasks[1:100]]
+    pages = mocker.patch.object(
+        adapter,
+        "get_task_instances",
+        side_effect=[
+            {"task_instances": first_page, "total_entries": 101},
+            {"task_instances": [tasks[0]], "total_entries": 101},
+            {"task_instances": tasks[:100], "total_entries": 101},
+            {"task_instances": tasks[100:], "total_entries": 101},
+        ],
+    )
+
+    result = invoke(interface, command)
+
+    summary = result["summary"] if command == "diagnose" else result
+    assert [task["map_index"] for task in summary["failed_tasks"]] == [100]
+    assert [call.kwargs["offset"] for call in pages.call_args_list] == [0, 100, 0, 100]
+    if command == "diagnose":
+        assert summary["total_tasks"] == 101
+        assert summary["state_counts"] == {"success": 100, "failed": 1}
+        adapter.trigger_dag_run.assert_not_called()
+    else:
+        assert "failed_tasks_error" not in result
+        assert result["dag_run"]["state"] == "failed"
+        adapter.trigger_dag_run.assert_called_once()
 
 
 @pytest.mark.parametrize("interface", ["mcp", "cli"])

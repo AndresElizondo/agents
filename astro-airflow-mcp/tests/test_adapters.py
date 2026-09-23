@@ -1632,7 +1632,7 @@ class TestGetAllTaskInstances:
     @pytest.mark.parametrize("map_index", [-1, 0])
     def test_duplicate_within_page_raises(self, mocker, map_index):
         adapter = self._adapter()
-        mocker.patch.object(
+        pages = mocker.patch.object(
             adapter,
             "get_task_instances",
             return_value={
@@ -1645,6 +1645,17 @@ class TestGetAllTaskInstances:
         )
         with pytest.raises(RuntimeError, match="duplicate task instance"):
             adapter.get_all_task_instances("dag", "run")
+        assert pages.call_count == 1
+
+    def test_restart_shares_the_page_budget(self, mocker):
+        adapter = self._adapter()
+        page = {"task_instances": [{"task_id": "t"}], "total_entries": 2}
+        pages = mocker.patch.object(adapter, "get_task_instances", return_value=page)
+
+        with pytest.raises(RuntimeError, match="exceeded 3 pages"):
+            adapter.get_all_task_instances("dag", "run", max_pages=3)
+
+        assert [call.kwargs["offset"] for call in pages.call_args_list] == [0, 1, 0]
 
     def test_page_limit_raises_instead_of_returning_partial_results(self, mocker):
         adapter = self._adapter()
