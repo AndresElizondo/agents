@@ -9,7 +9,7 @@ import typer
 from astro_airflow_mcp.cli.context import get_adapter
 from astro_airflow_mcp.cli.output import output_error, output_json, wrap_list_response
 from astro_airflow_mcp.constants import TERMINAL_DAG_RUN_STATES
-from astro_airflow_mcp.utils import extract_failed_tasks, summarize_task_instances
+from astro_airflow_mcp.utils import summarize_failed_tasks, summarize_task_instances
 
 app = typer.Typer(help="DAG run management commands", no_args_is_help=True)
 
@@ -197,6 +197,10 @@ def trigger_dag_and_wait(
             "Use --no-auto-unpause to fail fast when the DAG is paused.",
         ),
     ] = True,
+    include_all_failed_tasks: Annotated[
+        bool,
+        typer.Option("--all-failed-tasks", help="Return all failed-task details instead of 100"),
+    ] = False,
 ) -> None:
     """Trigger a DAG run and wait for completion.
 
@@ -258,8 +262,11 @@ def trigger_dag_and_wait(
                 # Fetch failed task details if not successful
                 if current_state != "success":
                     try:
-                        result["failed_tasks"] = _get_failed_task_instances(
-                            adapter, dag_id, dag_run_id
+                        tasks_data = adapter.get_all_task_instances(dag_id, dag_run_id)
+                        result.update(
+                            summarize_failed_tasks(
+                                tasks_data["task_instances"], include_all_failed_tasks
+                            )
                         )
                     except Exception as e:
                         result["failed_tasks_error"] = {"error": str(e)}
@@ -273,16 +280,6 @@ def trigger_dag_and_wait(
         raise
     except Exception as e:
         output_error(str(e))
-
-
-def _get_failed_task_instances(
-    adapter: Any,
-    dag_id: str,
-    dag_run_id: str,
-) -> list[dict[str, Any]]:
-    """Fetch task instances that failed in a DAG run."""
-    data = adapter.get_all_task_instances(dag_id, dag_run_id)
-    return extract_failed_tasks(data["task_instances"])
 
 
 @app.command("delete")
@@ -351,10 +348,14 @@ def clear_dag_run(
 def diagnose_dag_run(
     dag_id: Annotated[str, typer.Argument(help="The DAG ID")],
     dag_run_id: Annotated[str, typer.Argument(help="The DAG run ID")],
+    include_all_failed_tasks: Annotated[
+        bool,
+        typer.Option("--all-failed-tasks", help="Return all failed-task details instead of 100"),
+    ] = False,
 ) -> None:
     """Diagnose issues with a specific DAG run.
 
-    Returns run details, complete state counts and failed-task details,
+    Returns run details, complete state counts and up to 100 failed-task details,
     and up to 100 full task instances with explicit sample metadata.
     Retrieval errors are reported instead of an incomplete summary.
     """
@@ -372,7 +373,9 @@ def diagnose_dag_run(
     # Get task instances for this run
     try:
         tasks_data = adapter.get_all_task_instances(dag_id, dag_run_id)
-        result.update(summarize_task_instances(tasks_data["task_instances"]))
+        result.update(
+            summarize_task_instances(tasks_data["task_instances"], include_all_failed_tasks)
+        )
     except Exception as e:
         result["task_instances"] = {"error": str(e)}
 
