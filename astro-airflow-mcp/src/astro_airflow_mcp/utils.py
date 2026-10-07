@@ -79,12 +79,29 @@ def extract_failed_tasks(task_instances: list[dict[str, Any]]) -> list[dict[str,
     ]
 
 
-def summarize_task_instances(task_instances: list[dict[str, Any]]) -> dict[str, Any]:
+def summarize_failed_tasks(
+    task_instances: list[dict[str, Any]], include_all_failed_tasks: bool = False
+) -> dict[str, Any]:
+    """Count all failures and return bounded details, with actual failures first."""
+    failed = extract_failed_tasks(task_instances)
+    failed.sort(key=lambda task: task["state"] != "failed")
+    sample = failed if include_all_failed_tasks else failed[:DEFAULT_LIMIT]
+    return {
+        "failed_tasks": sample,
+        "failed_tasks_total": len(failed),
+        "failed_tasks_returned": len(sample),
+        "failed_tasks_truncated": len(sample) < len(failed),
+    }
+
+
+def summarize_task_instances(
+    task_instances: list[dict[str, Any]], include_all_failed_tasks: bool = False
+) -> dict[str, Any]:
     """Summarize every instance, retaining only a bounded sample of full details.
 
-    Counts and compact failed-task details cover the complete listing. The
-    sample prioritizes failed, then upstream_failed instances before other
-    states. MCP and CLI diagnostics share this format.
+    Counts cover the complete listing. Failed-task details default to 100 with
+    an opt-in for all. The full-detail sample always stays bounded, prioritizing
+    failed, then upstream_failed instances. MCP and CLI share this format.
     """
     state_order = {"failed": 0, "upstream_failed": 1}
     sample = sorted(task_instances, key=lambda task: state_order.get(task.get("state"), 2))[
@@ -99,7 +116,7 @@ def summarize_task_instances(task_instances: list[dict[str, Any]]) -> dict[str, 
             "state_counts": dict(
                 Counter(task.get("state") or "unknown" for task in task_instances)
             ),
-            "failed_tasks": extract_failed_tasks(task_instances),
+            **summarize_failed_tasks(task_instances, include_all_failed_tasks),
         },
     }
 
